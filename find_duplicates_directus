@@ -1,0 +1,107 @@
+import pandas as pd
+import re
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Загрузка полного CSV файла с экспертами
+file_path = 'experts.csv'  # Обновите путь при необходимости
+logging.info('Загрузка CSV файла.')
+df = pd.read_csv(file_path)
+
+# Нормализация имени путем сортировки частей имени и игнорирования среднего имени
+def normalize_name(name):
+    name_parts = re.split(r'\s+', name.strip())
+    name_parts = sorted(name_parts)
+    return ' '.join(name_parts).lower()
+
+# Добавление нормализованных имен в DataFrame
+def add_normalized_names(df):
+    logging.info('Нормализация имен.')
+    df['normalized_name'] = df['name'].apply(normalize_name)
+    logging.debug(df[['name', 'normalized_name']].head())  # Логирование первых нескольких строк оригинальных и нормализованных имен
+    return df
+
+# Функция для поиска и сохранения потенциальных дубликатов по критерию
+def find_and_save_duplicates(df, criteria, output_file, unique_field='normalized_name'):
+    logging.info(f'Поиск дубликатов по критерию {criteria}.')
+    duplicates = df[df.duplicated(subset=criteria, keep=False) & ~df.duplicated(subset=['id'], keep=False)]
+    
+    if not duplicates.empty:
+        duplicates = duplicates.sort_values(by=[unique_field] + criteria[1:])  # Сортировка дубликатов
+        duplicates.to_csv(output_file, index=False)
+        total_count = len(duplicates)
+        unique_count = duplicates[unique_field].nunique()
+        difference = total_count - unique_count
+        logging.info(f"Сохранены потенциальные дубликаты по критерию {criteria} в {output_file}")
+        logging.info(f"Количество записей в {output_file}: {total_count}")
+        logging.info(f"Количество уникальных значений в {output_file}: {unique_count}")
+        logging.info(f"Разница: {difference}")
+        return duplicates
+    else:
+        logging.info(f"Дубликаты не найдены по критерию {criteria}")
+        return pd.DataFrame()
+
+# Функция для обработки дубликатов по имени и телефону
+def process_name_phone(df):
+    return find_and_save_duplicates(df, ['normalized_name', 'phone'], 'experts_duplicates_name_phone.csv')
+
+# Функция для обработки дубликатов по имени и стране
+def process_name_country(df):
+    return find_and_save_duplicates(df, ['normalized_name', 'country'], 'experts_duplicates_name_country.csv')
+
+# Функция для обработки дубликатов только по телефону
+def process_only_phone(df):
+    logging.info('Поиск дубликатов только по телефону.')
+    duplicates = df[df.duplicated(subset=['phone'], keep=False)]
+    
+    if not duplicates.empty:
+        duplicates = duplicates.sort_values(by=['phone'])  # Сортировка дубликатов
+        duplicates.to_csv('experts_duplicates_only_phone.csv', index=False)
+        total_count = len(duplicates)
+        unique_count = duplicates['phone'].nunique()
+        difference = total_count - unique_count
+        logging.info(f"Сохранены потенциальные дубликаты только по телефону в experts_duplicates_only_phone.csv")
+        logging.info(f"Количество записей в experts_duplicates_only_phone.csv: {total_count}")
+        logging.info(f"Количество уникальных телефонов в experts_duplicates_only_phone.csv: {unique_count}")
+        logging.info(f"Разница: {difference}")
+        return duplicates
+    else:
+        logging.info(f"Дубликаты не найдены только по телефону")
+        return pd.DataFrame()
+
+# Функция для обработки дубликатов только по емейлу
+def process_only_email(df):
+    return find_and_save_duplicates(df, ['email'], 'experts_duplicates_only_email.csv', unique_field='email')
+
+# Нормализация имен
+df = add_normalized_names(df)
+
+# Выборка всех записей, где совпадает id
+duplicates_by_id = df[df.duplicated(subset=['id'], keep=False)]
+duplicates_by_id.to_csv('experts_duplicates_by_id.csv', index=False)
+total_count_id = len(duplicates_by_id)
+unique_count_id = duplicates_by_id['normalized_name'].nunique()
+difference_id = total_count_id - unique_count_id
+logging.info(f"Количество записей в experts_duplicates_by_id.csv: {total_count_id}")
+logging.info(f"Количество уникальных имен в experts_duplicates_by_id.csv: {unique_count_id}")
+logging.info(f"Разница: {difference_id}")
+
+# Удаление записей с совпадающим id из основного DataFrame
+df = df[~df.index.isin(duplicates_by_id.index)]
+
+# Обработка дубликатов по порядку
+duplicates_only_email = process_only_email(df)
+df = df[~df.index.isin(duplicates_only_email.index)]
+
+duplicates_name_phone = process_name_phone(df)
+df = df[~df.index.isin(duplicates_name_phone.index)]
+
+duplicates_only_phone = process_only_phone(df)
+df = df[~df.index.isin(duplicates_only_phone.index)]
+
+duplicates_name_country = process_name_country(df)
+df = df[~df.index.isin(duplicates_name_country.index)]
+
+logging.info('Обработка завершена.')
